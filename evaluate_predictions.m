@@ -1,16 +1,21 @@
 function evaluate_predictions(files, dims, description)
-    initial_thresholds = 0.5:0.05:1.2;
-     min_step = 0.001;
-%    min_step = 0.1;
+    disp('evaluating predictions...');
+    initial_thresholds = .9:.02:1;
+    %initial_thresholds = -0.5:0.4:1.5;
+    %initial_thresholds=0:.2:1;
+     min_step = 0.002;
+     %min_step = 0.05;
     
     f = fopen([files{1} '/../errors_new.txt'], 'w');
     saveAndPrint(f, 'Description:\n%s\n\n', description);
     
-    [r_thresholds, r_fscore, r_tp, r_fp, r_pos, r_neg, ~] = ...
-        evaluate_thresholds(files, dims, initial_thresholds, 'rand', min_step);
+    
     
     [p_thresholds, p_err, p_tp, p_fp, p_pos, p_neg, p_sqerr] = ...
         evaluate_thresholds(files, dims, initial_thresholds, 'pixel', min_step);
+    
+    [r_thresholds, r_fscore, r_tp, r_fp, r_pos, r_neg, ~] = ...
+        evaluate_thresholds(files, dims, initial_thresholds, 'rand', min_step);
     
     saveAndPrint(f, 'Mean Pixel Square Error: %f\n', p_sqerr);
     
@@ -27,6 +32,10 @@ function evaluate_predictions(files, dims, description)
     
     min_threshold_idx = floor((length(initial_thresholds)+1)/2);
     max_threshold_idx = ceil(length(r_thresholds) + 1 - min_threshold_idx);
+    
+    %r_thresholds
+    %r_fscore
+    %disp('Plotting...');
     
     clf;
     plt = subplot(2,2,1);
@@ -72,10 +81,9 @@ function evaluate_predictions(files, dims, description)
     saveas(plt, [files{1} '/../errors_new.png'], 'png');
     
     fclose(f);
-    
     save([files{1} '/../errors_new.mat'], ...
         'r_thresholds', 'r_fscore', 'r_tp', 'r_fp', 'r_pos', 'r_neg', ...
-        'p_thresholds', 'p_err', 'p_tp', 'p_fp', 'p_pos', 'p_neg', 'p_sqerr');
+        'p_thresholds', 'p_err', 'p_tp', 'p_fp', 'p_pos', 'p_neg', 'p_sqerr','min_threshold_idx','max_threshold_idx');
 end
 
 function saveAndPrint(varargin)
@@ -94,7 +102,7 @@ evaluate_thresholds(files, dims, thresholds, randOrPixel, min_step)
     p_sqerr = nan(length(files), 1);
     n_examples = nan(length(files), 1);
     %[err, tp, fp, pos, neg, p_sqerr] = get_stats(files{1}, thresholds, dims, randOrPixel);
-    parfor i=1:length(files)
+    for i=1:length(files)
     %for i=1:length(files)
         [err_, tp_, fp_, pos_, neg_, p_sqerr_, n_examples_] = get_stats(files{i}, thresholds, dims, randOrPixel);
         err(i,:) = err_;
@@ -104,21 +112,22 @@ evaluate_thresholds(files, dims, thresholds, randOrPixel, min_step)
         neg(i)= neg_;
         p_sqerr(i) = p_sqerr_;
         n_examples(i) = n_examples_;
-        %fprintf(':O');
+%         fprintf(':O');
     end
-    
-    tp = sum(bsxfun(@times, tp, n_examples));
-    fp = sum(bsxfun(@times, fp, n_examples));
+    tp = sum(bsxfun(@times, tp, n_examples)); %Chandan this had sum around it
+%     tp=tp*n_examples;                       %This works for one folder
+    fp = sum(bsxfun(@times, fp, n_examples)); %Chandan this had sum around it
+%     fp=fp*n_examples;                        %This works for one folder
     pos = sum(pos .* n_examples);
     neg = sum(neg .* n_examples);
     p_sqerr = sum(p_sqerr .* n_examples) / sum(n_examples);
     if(strcmp(randOrPixel,'rand'))
-        prec = tp ./ (tp + fp);
+        prec = tp ./ (tp + fp);  %has problems with NaN
         rec = tp / pos;
         err = 2 * (prec .* rec) ./ (prec + rec);
         [best_err, idx] = max(err);
     else
-        err = sum(bsxfun(@times, err, n_examples)) ./ sum(n_examples);
+         err = sum(bsxfun(@times, err, n_examples)) ./ sum(n_examples); %Chandan this had sum around it
         [best_err, idx] = min(err);
     end
 
@@ -143,9 +152,9 @@ end
 
 
 function [err, tp, fp, pos, neg, p_sqerr, n_examples] = get_stats(file, thresholds, dims, randOrPixel)
-    
+    %disp(file);
     [ affTrue, affEst, dimensions ] = load_affs( file, dims );
-    n_examples = numel(affEst)/2;
+    n_examples = numel(affEst)/3;
 %     load([file '/gradients.txt'])
 %     [~, idxs_idxs] = sort(sum(gradients(:,2:4), 2));
 %     idxs = gradients(idxs_idxs, 1);
@@ -219,13 +228,10 @@ function [r_err, r_tp, r_fp, r_pos, r_neg] = ...
         get_rand_stats_for_threshold(compTrue, affEst, threshold)
 
     if(~ all(affEst(:)<=threshold) && ~ all(affEst(:)>threshold))
-        nHood = -[1 0 0; 0 1 0];
-        sz = size(affEst);
-        affEst = reshape(affEst,[sz(1) sz(2) 1 sz(end)]);
- 
-        compEst = flip_aff(connectedComponents(flip_aff(affEst)>threshold, nHood));
+        %fprintf('reached, threshold: %f\n',threshold);
+        compEst = flip_aff(connectedComponents(flip_aff(affEst)>threshold));
 
-        watershed = markerWatershed(affEst, nHood, compEst);
+        watershed = markerWatershed(affEst, -eye(3), compEst);
 
         [ri, stats] = randIndex(compTrue, watershed);
         r_err = 1-ri;
@@ -235,6 +241,7 @@ function [r_err, r_tp, r_fp, r_pos, r_neg] = ...
         r_pos = stats.pos;
         r_neg = stats.neg;
 %         r_fscore = 2 * (stats.prec * stats.rec) / (stats.prec + stats.rec);
+  
     else 
         r_err = NaN;
         r_tp = NaN;
@@ -244,4 +251,5 @@ function [r_err, r_tp, r_fp, r_pos, r_neg] = ...
         r_neg = NaN;
 %         r_fscore = -1;
     end
+
 end
